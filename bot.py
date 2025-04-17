@@ -37,4 +37,3 @@ def status(message):
 
 # اجرای فقط یک بار برای تست
 main_job()
-Test message deploy to channel
