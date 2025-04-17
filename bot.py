@@ -23,7 +23,7 @@ def fetch_gold_data():
     url = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": "XAU/USD",
-        "interval": "15min",
+        "interval": "5min",
         "outputsize": 30,
         "apikey": "30e73a1373474b43912716946c754e08"
     }
