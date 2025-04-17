@@ -116,9 +116,7 @@ def history(message):
     c.execute("SELECT type, message, score, created_at FROM signals ORDER BY id DESC LIMIT 10")
     records = c.fetchall()
     if records:
-        response = "
-
-".join([f"{r[3]} | {r[0]} (امتیاز {r[2]}):\n{r[1]}" for r in records])
+        response = "\n\n".join([f"{r[3]} | {r[0]} (امتیاز {r[2]}):\n{r[1]}" for r in records])
     else:
         response = "هیچ سیگنالی هنوز ثبت نشده."
     bot.reply_to(message, response)
