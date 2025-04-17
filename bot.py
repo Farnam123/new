@@ -8,6 +8,7 @@ import telebot
 from dotenv import load_dotenv
 from keep_alive import keep_alive
 from datetime import datetime
+import threading
 
 # بارگذاری توکن
 load_dotenv()
@@ -20,12 +21,15 @@ keep_alive()
 # راه‌اندازی دیتابیس
 conn = sqlite3.connect("signals.db", check_same_thread=False)
 c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS signals
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              type TEXT,
-              message TEXT,
-              score INTEGER,
-              created_at TEXT)''')
+c.execute("""
+    CREATE TABLE IF NOT EXISTS signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT,
+        message TEXT,
+        score INTEGER,
+        created_at TEXT
+    )
+""")
 conn.commit()
 
 def log_signal(sig_type, msg, score):
@@ -98,7 +102,7 @@ def main_job():
         sig1, score1 = result_5m
         sig2, score2 = result_15m
         if sig1 == sig2 and sig1 is not None:
-            total_score = score1 + score2 + 1  # +1 برای تایید دو تایم‌فریم
+            total_score = score1 + score2 + 1
             msg = f"{'📈' if sig1=='buy' else '📉'} سیگنال {sig1.upper()} قوی!\nامتیاز: {total_score}/5"
             send_to_channel(msg)
             log_signal(sig1, msg, total_score)
@@ -132,9 +136,6 @@ def export_csv(message):
         bot.send_document(message.chat.id, f)
 
 schedule.every(15).minutes.do(main_job)
-
-
-import threading
 
 def telegram_bot_polling():
     print("🤖 ربات تلگرام در حال اجرا...")
