@@ -13,6 +13,7 @@ from datetime import datetime
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002250994558"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))  # شناسه تلگرام ادمین
 bot = telebot.TeleBot(BOT_TOKEN)
 keep_alive()
 
@@ -23,19 +24,20 @@ c.execute('''CREATE TABLE IF NOT EXISTS signals
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               type TEXT,
               message TEXT,
+              score INTEGER,
               created_at TEXT)''')
 conn.commit()
 
-def log_signal(sig_type, msg):
-    c.execute("INSERT INTO signals (type, message, created_at) VALUES (?, ?, ?)",
-              (sig_type, msg, datetime.now().isoformat()))
+def log_signal(sig_type, msg, score):
+    c.execute("INSERT INTO signals (type, message, score, created_at) VALUES (?, ?, ?, ?)",
+              (sig_type, msg, score, datetime.now().isoformat()))
     conn.commit()
 
-def fetch_gold_data():
+def fetch_gold_data(interval="5min"):
     url = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": "XAU/USD",
-        "interval": "5min",
+        "interval": interval,
         "outputsize": 30,
         "apikey": "30e73a1373474b43912716946c754e08"
     }
@@ -66,65 +68,57 @@ def analyze_signal(data):
         rs = avg_gain / avg_loss if avg_loss != 0 else 0
         rsi = 100 - (100 / (1 + rs))
 
+        signal = None
+        score = 0
         if rsi < 30 and macd_line[-1] > signal_line[-1]:
-            return "buy"
+            signal = "buy"
+            score += 1
         elif rsi > 70 and macd_line[-1] < signal_line[-1]:
-            return "sell"
-        else:
-            return None
+            signal = "sell"
+            score += 1
+
+        return (signal, score)
     except:
         return None
-
-def fetch_economic_news():
-    url = "https://api.twelvedata.com/news"
-    params = {
-        "symbol": "XAU/USD",
-        "apikey": "30e73a1373474b43912716946c754e08"
-    }
-    try:
-        res = requests.get(url, params=params).json()
-        return [item['title'] for item in res.get('data', [])[:5]]
-    except:
-        return []
 
 def send_to_channel(text):
     try:
         bot.send_message(CHANNEL_ID, text)
+        bot.send_message(ADMIN_ID, f"📬 نوتیفیکیشن: {text}")
         print("✅ پیام ارسال شد.")
     except Exception as e:
         print(f"❌ ارسال ناموفق: {e}")
 
 def main_job():
-    print("🔍 بررسی سیگنال‌ها...")
-    data = fetch_gold_data()
-    signal = analyze_signal(data)
-    if signal:
-        msg = "📈 سیگنال خرید قوی!" if signal == "buy" else "📉 سیگنال فروش قوی!"
-        send_to_channel(msg)
-        log_signal(signal, msg)
-    else:
-        print("⏳ سیگنالی صادر نشد.")
+    print("🔍 تحلیل بازار در حال اجرا...")
+    result_5m = analyze_signal(fetch_gold_data("5min"))
+    result_15m = analyze_signal(fetch_gold_data("15min"))
 
-    news = fetch_economic_news()
-    if news:
-        send_to_channel("📰 آخرین اخبار اقتصادی:")
-        for n in news:
-            send_to_channel(f"🟡 {n}")
-            log_signal("news", n)
+    if result_5m and result_15m:
+        sig1, score1 = result_5m
+        sig2, score2 = result_15m
+        if sig1 == sig2 and sig1 is not None:
+            total_score = score1 + score2 + 1  # +1 برای تایید دو تایم‌فریم
+            msg = f"{'📈' if sig1=='buy' else '📉'} سیگنال {sig1.upper()} قوی!\nامتیاز: {total_score}/5"
+            send_to_channel(msg)
+            log_signal(sig1, msg, total_score)
+        else:
+            print("❕ سیگنال‌ها متفاوت بودن یا نامشخص.")
+    else:
+        print("⏳ اطلاعات ناکافی برای تحلیل.")
 
 @bot.message_handler(commands=['status'])
 def status(message):
-    bot.reply_to(message, "✅ ربات فعال است.")
+    bot.reply_to(message, "✅ ربات آنلاین است و تحلیل ترکیبی انجام می‌دهد.")
 
 @bot.message_handler(commands=['history'])
 def history(message):
-    c.execute("SELECT type, message, created_at FROM signals ORDER BY id DESC LIMIT 10")
+    c.execute("SELECT type, message, score, created_at FROM signals ORDER BY id DESC LIMIT 10")
     records = c.fetchall()
     if records:
         response = "
 
-".join([f"{r[2]} | {r[0]}:
-{r[1]}" for r in records])
+".join([f"{r[3]} | {r[0]} (امتیاز {r[2]}):\n{r[1]}" for r in records])
     else:
         response = "هیچ سیگنالی هنوز ثبت نشده."
     bot.reply_to(message, response)
@@ -133,17 +127,15 @@ def history(message):
 def export_csv(message):
     path = "/tmp/signals_export.csv"
     with open(path, "w") as f:
-        f.write("Type,Message,Created_At
-")
-        for row in c.execute("SELECT type, message, created_at FROM signals"):
-            f.write(f"{row[0]},{row[1].replace(',', ';')},{row[2]}
-")
+        f.write("Type,Message,Score,Created_At\n")
+        for row in c.execute("SELECT type, message, score, created_at FROM signals"):
+            f.write(f"{row[0]},{row[1].replace(',', ';')},{row[2]},{row[3]}\n")
     with open(path, "rb") as f:
         bot.send_document(message.chat.id, f)
 
 schedule.every(15).minutes.do(main_job)
 
-print("🤖 ربات تحلیل‌گر طلا فعال شد...")
+print("🤖 ربات تحلیل‌گر طلا - نسخه ۳ فعال شد...")
 while True:
     schedule.run_pending()
     time.sleep(1)
