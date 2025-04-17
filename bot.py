@@ -1,42 +1,44 @@
-
 import os
 import sqlite3
 import requests
 import schedule
 import time
 import telebot
-from dotenv import load_dotenv
-from keep_alive import keep_alive
-from datetime import datetime
 import threading
+from dotenv import load_dotenv
+from datetime import datetime
+from keep_alive import keep_alive
 
-# بارگذاری توکن
+# بارگذاری متغیرهای محیطی
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002250994558"))
-ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))  # شناسه تلگرام ادمین
+ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))
+
+if not BOT_TOKEN:
+    raise ValueError("توکن ربات یافت نشد!")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 keep_alive()
 
-# راه‌اندازی دیتابیس
+# راه‌اندازی دیتابیس SQLite
 conn = sqlite3.connect("signals.db", check_same_thread=False)
 c = conn.cursor()
-c.execute("""
-    CREATE TABLE IF NOT EXISTS signals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT,
-        message TEXT,
-        score INTEGER,
-        created_at TEXT
-    )
-""")
+c.execute('''CREATE TABLE IF NOT EXISTS signals
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              type TEXT,
+              message TEXT,
+              score INTEGER,
+              created_at TEXT)''')
 conn.commit()
 
+# لاگ سیگنال در دیتابیس
 def log_signal(sig_type, msg, score):
     c.execute("INSERT INTO signals (type, message, score, created_at) VALUES (?, ?, ?, ?)",
               (sig_type, msg, score, datetime.now().isoformat()))
     conn.commit()
 
+# دریافت داده طلا
 def fetch_gold_data(interval="5min"):
     url = "https://api.twelvedata.com/time_series"
     params = {
@@ -47,10 +49,12 @@ def fetch_gold_data(interval="5min"):
     }
     return requests.get(url, params=params).json()
 
+# تحلیل با MACD و RSI
 def analyze_signal(data):
     try:
         closes = [float(c['close']) for c in data['values']][::-1]
-        if len(closes) < 26: return None
+        if len(closes) < 26:
+            return None
 
         def ema(prices, p):
             ema_vals = [sum(prices[:p]) / p]
@@ -85,6 +89,7 @@ def analyze_signal(data):
     except:
         return None
 
+# ارسال پیام به کانال و ادمین
 def send_to_channel(text):
     try:
         bot.send_message(CHANNEL_ID, text)
@@ -93,6 +98,7 @@ def send_to_channel(text):
     except Exception as e:
         print(f"❌ ارسال ناموفق: {e}")
 
+# اجرای تحلیل اصلی
 def main_job():
     print("🔍 تحلیل بازار در حال اجرا...")
     result_5m = analyze_signal(fetch_gold_data("5min"))
@@ -111,10 +117,12 @@ def main_job():
     else:
         print("⏳ اطلاعات ناکافی برای تحلیل.")
 
+# دستور وضعیت
 @bot.message_handler(commands=['status'])
 def status(message):
     bot.reply_to(message, "✅ ربات آنلاین است و تحلیل ترکیبی انجام می‌دهد.")
 
+# تاریخچه سیگنال
 @bot.message_handler(commands=['history'])
 def history(message):
     c.execute("SELECT type, message, score, created_at FROM signals ORDER BY id DESC LIMIT 10")
@@ -122,28 +130,34 @@ def history(message):
     if records:
         response = "\n\n".join([f"{r[3]} | {r[0]} (امتیاز {r[2]}):\n{r[1]}" for r in records])
     else:
-        response = "هیچ سیگنالی هنوز ثبت نشده."
+        response = "📭 هنوز سیگنالی ثبت نشده."
     bot.reply_to(message, response)
 
+# خروجی CSV
 @bot.message_handler(commands=['export'])
 def export_csv(message):
     path = "/tmp/signals_export.csv"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("Type,Message,Score,Created_At\n")
         for row in c.execute("SELECT type, message, score, created_at FROM signals"):
             f.write(f"{row[0]},{row[1].replace(',', ';')},{row[2]},{row[3]}\n")
     with open(path, "rb") as f:
         bot.send_document(message.chat.id, f)
 
-schedule.every(15).minutes.do(main_job)
-
-def telegram_bot_polling():
+# راه‌اندازی polling به‌صورت thread
+def start_polling():
     print("🤖 ربات تلگرام در حال اجرا...")
-    bot.polling(none_stop=True)
+    bot.infinity_polling(timeout=60, long_polling_timeout=20)
 
-threading.Thread(target=telegram_bot_polling).start()
+# اجرای برنامه اصلی
+if __name__ == "__main__":
+    # اجرای threading برای بات
+    threading.Thread(target=start_polling).start()
 
-print("📈 اجرای تحلیل زمان‌بندی‌شده شروع شد...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+    # اجرای تحلیل طبق زمان‌بندی
+    schedule.every(15).minutes.do(main_job)
+    print("📈 اجرای تحلیل زمان‌بندی‌شده شروع شد...")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
