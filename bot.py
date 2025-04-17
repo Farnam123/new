@@ -70,7 +70,7 @@ def main_job():
 def status(message):
     bot.reply_to(message, "تحلیل احساسات روی اخبار اقتصادی فعال است.")
 
-# اجرای خودکار هر 15 دقیقه
+# اجرای خودکار هر 5 دقیقه
 schedule.every(15).minutes.do(main_job)
 
 # شروع برنامه
