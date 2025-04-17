@@ -1,0 +1,6 @@
+
+python-dotenv
+pyTelegramBotAPI
+schedule
+requests
+flask
