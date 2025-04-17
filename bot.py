@@ -133,7 +133,16 @@ def export_csv(message):
 
 schedule.every(15).minutes.do(main_job)
 
-print("🤖 ربات تحلیل‌گر طلا - نسخه ۳ فعال شد...")
+
+import threading
+
+def telegram_bot_polling():
+    print("🤖 ربات تلگرام در حال اجرا...")
+    bot.polling(none_stop=True)
+
+threading.Thread(target=telegram_bot_polling).start()
+
+print("📈 اجرای تحلیل زمان‌بندی‌شده شروع شد...")
 while True:
     schedule.run_pending()
     time.sleep(1)
