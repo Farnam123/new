@@ -1,16 +1,13 @@
 import os
-import json
 import time
 import requests
-import telebot
 import schedule
+import telebot
 import numpy as np
 import pandas as pd
-from threading import Thread
 from dotenv import load_dotenv
+from threading import Thread
 from transformers import pipeline
-from flask import Flask, request
-from datetime import datetime, timedelta
 
 # بارگذاری متغیرها
 load_dotenv()
@@ -20,10 +17,10 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 sentiment_analyzer = pipeline("sentiment-analysis")
 
-# تحلیل احساسات اخبار
+# تحلیل اخبار
 def fetch_news_sentiment():
     url = f"https://newsapi.org/v2/top-headlines?q=gold+usd+inflation&language=en&apiKey={NEWSAPI_KEY}"
     res = requests.get(url)
@@ -71,7 +68,7 @@ def calculate_rsi(closes, period=14):
         return "overbought"
     return "neutral"
 
-# امتیازدهی هوشمند
+# امتیازدهی
 def calculate_signal_score(macd_sig, rsi_sig, news_sentiments):
     score = 0
     if macd_sig == "bullish":
@@ -87,16 +84,16 @@ def calculate_signal_score(macd_sig, rsi_sig, news_sentiments):
     news_score = sum([s for _, s in news_sentiments])
     score += int(news_score * 25)
 
-    return min(max(score, 0), 100)  # محدود به 0 تا 100
+    return min(max(score, 0), 100)
 
-# ارسال پیام به چت
+# ارسال به چت
 def send_to_channel(text):
     try:
         bot.send_message(ADMIN_ID, text)
     except Exception as e:
         print(f"❌ خطا در ارسال: {e}")
 
-# اجرای تحلیل
+# تحلیل اصلی
 def main_job():
     try:
         send_to_channel("🔍 تحلیل جدید شروع شد...")
@@ -122,7 +119,7 @@ def main_job():
     except Exception as e:
         send_to_channel(f"❌ خطا در تحلیل: {e}")
 
-# فرمان تست /signal
+# فرمان دستی
 @bot.message_handler(commands=['signal'])
 def signal_cmd(message):
     bot.reply_to(message, "🚀 اجرای دستی تحلیل بازار...")
@@ -130,16 +127,17 @@ def signal_cmd(message):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "سلام فرنام! ربات آماده ارسال سیگنال‌های هوشمند شده 🔥")
+    bot.reply_to(message, "سلام فرنام! ربات حرفه‌ای فعال شد 🔥")
 
-# زمان‌بندی هر ۵ دقیقه
+# اجرای دوره‌ای
 schedule.every(5).minutes.do(main_job)
 
-# اجرای دائمی
-def run_bot():
+# اجرای پایدار
+def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-Thread(target=run_bot).start()
-bot.polling(none_stop=True)
+# فقط یکبار اجرا
+Thread(target=run_scheduler).start()
+bot.infinity_polling()
