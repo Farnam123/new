@@ -8,8 +8,9 @@ from flask import Flask, request
 from threading import Thread
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from transformers import pipeline  # تحلیل احساسات با HuggingFace
+from transformers import pipeline
 import numpy as np
+import pandas as pd
 
 # بارگذاری متغیرهای محیطی
 load_dotenv()
@@ -20,22 +21,17 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
-# پیکربندی ربات
 bot = telebot.TeleBot(TOKEN)
-
-# لود مدل تحلیل احساسات
 sentiment_analyzer = pipeline("sentiment-analysis")
 
-# دیتابیس کاربران
 USERS_FILE = "users.json"
-
 PLANS = {
     "1day": {"price": 3, "days": 1},
     "7days": {"price": 15, "days": 7},
     "30days": {"price": 40, "days": 30}
 }
 
-# --- مدیریت کاربران ---
+# مدیریت کاربران
 def load_users():
     if not os.path.exists(USERS_FILE):
         return {}
@@ -59,11 +55,10 @@ def activate_user(user_id, days):
     users[str(user_id)] = {"expire_at": expire_at.isoformat()}
     save_users(users)
 
-# --- پرداخت و اشتراک ---
+# خرید پلن
 @bot.message_handler(commands=['subscribe'])
 def show_plans(message):
-    text = "پلن‌های اشتراک:
-"
+    text = "پلن‌های اشتراک:\n"
     for k, v in PLANS.items():
         text += f"🔹 {k} → {v['price']} USDT / {v['days']} روز\n"
     text += "\nبرای خرید، مثلا بنویس: /buy 7days"
@@ -77,13 +72,11 @@ def buy_plan(message):
             bot.reply_to(message, "❌ پلن نامعتبر")
             return
         address = get_payment_address(message.from_user.id, plan_key)
-        bot.reply_to(message, f"برای پرداخت {PLANS[plan_key]['price']} USDT:
-💳 آدرس:
-`{address}`", parse_mode="Markdown")
+        bot.reply_to(message, f"برای پرداخت {PLANS[plan_key]['price']} USDT:\n💳 آدرس:\n`{address}`", parse_mode="Markdown")
     except:
         bot.reply_to(message, "❌ فرمت درست نیست. استفاده کن از /buy 7days")
 
-# --- دریافت آدرس اختصاصی از CryptAPI ---
+# ساخت آدرس پرداخت اختصاصی
 def get_payment_address(user_id, plan_key):
     callback_url = f"https://{REPLIT_PROJECT}/webhook"
     res = requests.get("https://api.cryptapi.io/usdt-trc20/create/", params={
@@ -93,7 +86,7 @@ def get_payment_address(user_id, plan_key):
     })
     return res.json().get("address")
 
-# --- وب‌هوک پرداخت ---
+# وب‌هوک پرداخت
 app = Flask(__name__)
 
 @app.route('/webhook')
@@ -110,12 +103,12 @@ def webhook():
             bot.send_message(int(user_id), f"✅ اشتراک شما برای {plan['days']} روز فعال شد.")
     return "OK"
 
-# --- اجرای فلَسک ---
 def run_flask():
     app.run(host="0.0.0.0", port=8080)
+
 Thread(target=run_flask).start()
 
-# --- تحلیل اخبار اقتصادی (NewsAPI) ---
+# تحلیل اخبار اقتصادی
 def fetch_economic_news():
     url = f"https://newsapi.org/v2/top-headlines?q=gold+usd+inflation+economy&language=en&apiKey={NEWSAPI_KEY}"
     response = requests.get(url)
@@ -124,7 +117,7 @@ def fetch_economic_news():
         return [a["title"] for a in articles[:3]]
     return []
 
-# --- تحلیل تکنیکال ساده با MACD و RSI از TwelveData ---
+# تحلیل تکنیکال با MACD و RSI
 def fetch_technical_analysis():
     url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     response = requests.get(url)
@@ -163,7 +156,7 @@ def calculate_rsi_signal(closes, period=14):
         return "RSI_OVERBOUGHT"
     return "RSI_NEUTRAL"
 
-# --- ربات ---
+# ربات: start و signal
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.reply_to(message, "سلام فرنام! ربات فعال شد. برای اشتراک دستور /subscribe رو بزن.")
@@ -175,7 +168,7 @@ def send_signal(message):
         return
     bot.send_message(message.chat.id, "📈 سیگنال تست ارسال شد!")
 
-# --- اجرای تحلیل و ارسال خودکار هر ۵ دقیقه ---
+# اجرای تحلیل خودکار
 def main_job():
     print("🔍 تحلیل بازار...")
     bot.send_message(ADMIN_ID, "⏰ اجرای تحلیل بازار و ارسال سیگنال")
@@ -195,8 +188,8 @@ def main_job():
 
 schedule.every(5).minutes.do(main_job)
 
-# --- اجرای دائمی ---
-print("🤖 ربات پرداخت و سیگنال‌دهی فعال شد...")
+# اجرای مداوم
+print("🤖 ربات تحلیل‌گر فعال شد...")
 while True:
     schedule.run_pending()
     time.sleep(1)
