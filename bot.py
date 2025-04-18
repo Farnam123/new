@@ -62,11 +62,11 @@ def activate_user(user_id, days):
 # --- پرداخت و اشتراک ---
 @bot.message_handler(commands=['subscribe'])
 def show_plans(message):
-    text = "پلن‌های اشتراک:
+    text = """پلن‌های اشتراک:
 "
     for k, v in PLANS.items():
         text += f"🔹 {k} → {v['price']} USDT / {v['days']} روز\n"
-    text += "\nبرای خرید، مثلا بنویس: /buy 7days"
+    text += "\nبرای خرید، مثلا بنویس: /buy 7days"""
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['buy'])
