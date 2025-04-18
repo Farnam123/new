@@ -1,9 +1,9 @@
-
 python-dotenv
 pyTelegramBotAPI
 schedule
 requests
-flask
+Flask
 transformers
-TensorFlow
-karas
+torch
+pandas
+numpy
