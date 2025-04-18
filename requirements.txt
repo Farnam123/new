@@ -5,3 +5,4 @@ schedule
 requests
 flask
 transformers
+TensorFlow 2.0
