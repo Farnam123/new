@@ -77,9 +77,9 @@ def buy_plan(message):
             bot.reply_to(message, "❌ پلن نامعتبر")
             return
         address = get_payment_address(message.from_user.id, plan_key)
-        bot.reply_to(message, f"برای پرداخت {PLANS[plan_key]['price']} USDT:
+        bot.reply_to(message, f"""برای پرداخت {PLANS[plan_key]['price']} USDT:
 💳 آدرس:
-`{address}`", parse_mode="Markdown")
+`{address}`""", parse_mode="Markdown")
     except:
         bot.reply_to(message, "❌ فرمت درست نیست. استفاده کن از /buy 7days")
 
