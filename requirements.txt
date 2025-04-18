@@ -4,3 +4,4 @@ pyTelegramBotAPI
 schedule
 requests
 flask
+transformers
