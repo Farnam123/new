@@ -1,222 +1,203 @@
 import os
-import sqlite3
-import requests
-import schedule
+import json
 import time
+import requests
 import telebot
-import threading
+import schedule
+from flask import Flask, request
+from threading import Thread
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from datetime import datetime
-from keep_alive import keep_alive
+from transformers import pipeline  # تحلیل احساسات با HuggingFace
+import numpy as np
 
 # بارگذاری متغیرهای محیطی
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002250994558"))
+TOKEN = os.getenv("BOT_TOKEN")
+REPLIT_PROJECT = os.getenv("REPLIT_PROJECT")
+USDT_ADDRESS = os.getenv("USDT_ADDRESS")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "110251199"))
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 
-if not BOT_TOKEN:
-    raise ValueError("توکن ربات یافت نشد!")
+# پیکربندی ربات
+bot = telebot.TeleBot(TOKEN)
 
-bot = telebot.TeleBot(BOT_TOKEN)
-keep_alive()
+# لود مدل تحلیل احساسات
+sentiment_analyzer = pipeline("sentiment-analysis")
 
-# راه‌اندازی دیتابیس
-conn = sqlite3.connect("signals.db", check_same_thread=False)
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS signals
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              type TEXT,
-              message TEXT,
-              score INTEGER,
-              created_at TEXT)''')
-conn.commit()
+# دیتابیس کاربران
+USERS_FILE = "users.json"
 
-# ذخیره سیگنال
-def log_signal(sig_type, msg, score):
-    c.execute("INSERT INTO signals (type, message, score, created_at) VALUES (?, ?, ?, ?)",
-              (sig_type, msg, score, datetime.now().isoformat()))
-    conn.commit()
+PLANS = {
+    "1day": {"price": 3, "days": 1},
+    "7days": {"price": 15, "days": 7},
+    "30days": {"price": 40, "days": 30}
+}
 
-# دریافت قیمت طلا
-def fetch_gold_data(interval="5min"):
-    url = "https://api.twelvedata.com/time_series"
-    params = {
-        "symbol": "XAU/USD",
-        "interval": interval,
-        "outputsize": 30,
-        "apikey": "30e73a1373474b43912716946c754e08"
-    }
-    return requests.get(url, params=params).json()
+# --- مدیریت کاربران ---
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
 
-# تحلیل MACD و RSI
-def analyze_signal(data):
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=2)
+
+def is_user_active(user_id):
+    users = load_users()
+    user = users.get(str(user_id))
+    if not user:
+        return False
+    return datetime.now() < datetime.fromisoformat(user["expire_at"])
+
+def activate_user(user_id, days):
+    users = load_users()
+    expire_at = datetime.now() + timedelta(days=days)
+    users[str(user_id)] = {"expire_at": expire_at.isoformat()}
+    save_users(users)
+
+# --- پرداخت و اشتراک ---
+@bot.message_handler(commands=['subscribe'])
+def show_plans(message):
+    text = "پلن‌های اشتراک:
+"
+    for k, v in PLANS.items():
+        text += f"🔹 {k} → {v['price']} USDT / {v['days']} روز\n"
+    text += "\nبرای خرید، مثلا بنویس: /buy 7days"
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['buy'])
+def buy_plan(message):
     try:
-        closes = [float(c['close']) for c in data['values']][::-1]
-        if len(closes) < 26:
-            return None
-        def ema(prices, p):
-            ema_vals = [sum(prices[:p]) / p]
-            k = 2 / (p + 1)
-            for price in prices[p:]:
-                ema_vals.append(price * k + ema_vals[-1] * (1 - k))
-            return ema_vals
-
-        ema_12 = ema(closes, 12)
-        ema_26 = ema(closes, 26)
-        macd_line = [a - b for a, b in zip(ema_12[-len(ema_26):], ema_26)]
-        signal_line = ema(macd_line, 9)
-
-        deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        gains = [d if d > 0 else 0 for d in deltas]
-        losses = [-d if d < 0 else 0 for d in deltas]
-        avg_gain = sum(gains[-14:]) / 14
-        avg_loss = sum(losses[-14:]) / 14
-        rs = avg_gain / avg_loss if avg_loss != 0 else 0
-        rsi = 100 - (100 / (1 + rs))
-
-        signal = None
-        score = 0
-        if rsi < 30 and macd_line[-1] > signal_line[-1]:
-            signal = "buy"
-            score += 1
-        elif rsi > 70 and macd_line[-1] < signal_line[-1]:
-            signal = "sell"
-            score += 1
-        return (signal, score)
+        _, plan_key = message.text.split()
+        if plan_key not in PLANS:
+            bot.reply_to(message, "❌ پلن نامعتبر")
+            return
+        address = get_payment_address(message.from_user.id, plan_key)
+        bot.reply_to(message, f"برای پرداخت {PLANS[plan_key]['price']} USDT:
+💳 آدرس:
+`{address}`", parse_mode="Markdown")
     except:
-        return None
+        bot.reply_to(message, "❌ فرمت درست نیست. استفاده کن از /buy 7days")
 
-# تحلیل فیبوناچی ساده
-def check_fibonacci_signal(data):
-    try:
-        prices = [float(c['close']) for c in data['values']][::-1]
-        recent_high = max(prices[-10:])
-        recent_low = min(prices[-10:])
-        last_price = prices[-1]
-        fib_382 = recent_high - 0.382 * (recent_high - recent_low)
-        fib_618 = recent_high - 0.618 * (recent_high - recent_low)
+# --- دریافت آدرس اختصاصی از CryptAPI ---
+def get_payment_address(user_id, plan_key):
+    callback_url = f"https://{REPLIT_PROJECT}/webhook"
+    res = requests.get("https://api.cryptapi.io/usdt-trc20/create/", params={
+        "callback": callback_url,
+        "address": USDT_ADDRESS,
+        "custom": f"{user_id}_{plan_key}"
+    })
+    return res.json().get("address")
 
-        if abs(last_price - fib_382) < 1 or abs(last_price - fib_618) < 1:
-            return 1
-        return 0
-    except:
-        return 0
+# --- وب‌هوک پرداخت ---
+app = Flask(__name__)
 
-# تحلیل فرکتال ساده
-def check_fractal_signal(data):
-    try:
-        highs = [float(x['high']) for x in data['values']][::-1]
-        lows = [float(x['low']) for x in data['values']][::-1]
-        if highs[2] > highs[1] and highs[2] > highs[3]:
-            return 1  # سیگنال فروش
-        if lows[2] < lows[1] and lows[2] < lows[3]:
-            return 1  # سیگنال خرید
-        return 0
-    except:
-        return 0
+@app.route('/webhook')
+def webhook():
+    data = request.args
+    user_data = data.get('custom')
+    tx_value = float(data.get('value', 0)) / 1e6
 
-# تحلیل احساسات از NewsAPI
-def fetch_news_sentiment():
-    try:
-        url = f"https://newsapi.org/v2/everything?q=gold+XAUUSD&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
-        res = requests.get(url).json()
-        titles = [article['title'] for article in res['articles'][:5]]
-        positives = sum(1 for t in titles if any(w in t.lower() for w in ["up", "rise", "bullish", "gain"]))
-        negatives = sum(1 for t in titles if any(w in t.lower() for w in ["down", "drop", "bearish", "fall"]))
-        if positives > negatives:
-            return 1
-        elif negatives > positives:
-            return -1
-        return 0
-    except:
-        return 0
+    if user_data:
+        user_id, plan_key = user_data.split("_")
+        plan = PLANS.get(plan_key)
+        if plan and tx_value >= plan['price']:
+            activate_user(int(user_id), plan['days'])
+            bot.send_message(int(user_id), f"✅ اشتراک شما برای {plan['days']} روز فعال شد.")
+    return "OK"
 
-# تحلیل ترکیبی هوشمند
-def smart_analysis():
-    try:
-        data_5m = fetch_gold_data("5min")
-        data_15m = fetch_gold_data("15min")
-        news_score = fetch_news_sentiment()
-        fib_score = check_fibonacci_signal(data_5m)
-        fractal_score = check_fractal_signal(data_5m)
+# --- اجرای فلَسک ---
+def run_flask():
+    app.run(host="0.0.0.0", port=8080)
+Thread(target=run_flask).start()
 
-        score = 0
-        signal_final = None
+# --- تحلیل اخبار اقتصادی (NewsAPI) ---
+def fetch_economic_news():
+    url = f"https://newsapi.org/v2/top-headlines?q=gold+usd+inflation+economy&language=en&apiKey={NEWSAPI_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        articles = response.json().get("articles", [])
+        return [a["title"] for a in articles[:3]]
+    return []
 
-        sig_5m = analyze_signal(data_5m)
-        sig_15m = analyze_signal(data_15m)
+# --- تحلیل تکنیکال ساده با MACD و RSI از TwelveData ---
+def fetch_technical_analysis():
+    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json().get("values", [])
+        closes = [float(x["close"]) for x in reversed(data)]
+        macd_signal = calculate_macd_signal(closes)
+        rsi_signal = calculate_rsi_signal(closes)
+        return macd_signal, rsi_signal
+    return None, None
 
-        if sig_5m and sig_15m and sig_5m[0] == sig_15m[0] and sig_5m[0] is not None:
-            signal_final = sig_5m[0]
-            score += sig_5m[1] + sig_15m[1] + 1
-        else:
-            return None
+def calculate_macd_signal(closes):
+    exp1 = np.array(pd.Series(closes).ewm(span=12, adjust=False).mean())
+    exp2 = np.array(pd.Series(closes).ewm(span=26, adjust=False).mean())
+    macd = exp1 - exp2
+    signal = pd.Series(macd).ewm(span=9, adjust=False).mean()
+    if macd[-1] > signal.iloc[-1] and macd[-2] <= signal.iloc[-2]:
+        return "MACD_CROSS_UP"
+    elif macd[-1] < signal.iloc[-1] and macd[-2] >= signal.iloc[-2]:
+        return "MACD_CROSS_DOWN"
+    return "MACD_NEUTRAL"
 
-        score += fib_score + fractal_score
-        if news_score == 1:
-            score += 1
+def calculate_rsi_signal(closes, period=14):
+    delta = np.diff(closes)
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+    avg_gain = np.mean(gain[-period:])
+    avg_loss = np.mean(loss[-period:])
+    if avg_loss == 0:
+        return "RSI_OVERBOUGHT"
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    if rsi < 30:
+        return "RSI_OVERSOLD"
+    elif rsi > 70:
+        return "RSI_OVERBOUGHT"
+    return "RSI_NEUTRAL"
 
-        return (signal_final, score)
-    except Exception as e:
-        print(f"❌ خطا در تحلیل نهایی: {e}")
-        return None
+# --- ربات ---
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "سلام فرنام! ربات فعال شد. برای اشتراک دستور /subscribe رو بزن.")
 
-# ارسال پیام
-def send_to_channel(text):
-    try:
-        bot.send_message(CHANNEL_ID, text)
-        bot.send_message(ADMIN_ID, f"📬 نوتیفیکیشن: {text}")
-        print("✅ پیام ارسال شد.")
-    except Exception as e:
-        print(f"❌ ارسال ناموفق: {e}")
+@bot.message_handler(commands=['signal'])
+def send_signal(message):
+    if not is_user_active(message.from_user.id):
+        bot.reply_to(message, "❌ اشتراک شما فعال نیست. دستور /subscribe را بزنید.")
+        return
+    bot.send_message(message.chat.id, "📈 سیگنال تست ارسال شد!")
 
-# اجرای اصلی
+# --- اجرای تحلیل و ارسال خودکار هر ۵ دقیقه ---
 def main_job():
-    print("🚀 تحلیل ترکیبی در حال اجرا...")
-    result = smart_analysis()
-    if result:
-        signal, score = result
-        msg = f"{'📈' if signal == 'buy' else '📉'} سیگنال {signal.upper()} هوشمند 🔍\nامتیاز: {score}/5"
-        send_to_channel(msg)
-        log_signal(signal, msg, score)
-    else:
-        print("⏳ سیگنالی صادر نشد.")
+    print("🔍 تحلیل بازار...")
+    bot.send_message(ADMIN_ID, "⏰ اجرای تحلیل بازار و ارسال سیگنال")
 
-# فرمان‌ها
-@bot.message_handler(commands=['status'])
-def status(message):
-    bot.reply_to(message, "✅ ربات آنلاین است و تحلیل ترکیبی انجام می‌دهد.")
+    macd_signal, rsi_signal = fetch_technical_analysis()
+    bot.send_message(ADMIN_ID, f"📉 MACD: {macd_signal}, RSI: {rsi_signal}")
 
-@bot.message_handler(commands=['history'])
-def history(message):
-    c.execute("SELECT type, message, score, created_at FROM signals ORDER BY id DESC LIMIT 10")
-    records = c.fetchall()
-    if records:
-        response = "\n\n".join([f"{r[3]} | {r[0]} (امتیاز {r[2]}):\n{r[1]}" for r in records])
-    else:
-        response = "📭 هنوز سیگنالی ثبت نشده."
-    bot.reply_to(message, response)
+    news_list = fetch_economic_news()
+    if news_list:
+        bot.send_message(ADMIN_ID, "📰 آخرین اخبار اقتصادی:")
+        for news in news_list:
+            sentiment = sentiment_analyzer(news)[0]
+            label = sentiment['label']
+            score = sentiment['score']
+            emoji = "🟢" if label == "POSITIVE" else ("🔴" if label == "NEGATIVE" else "⚪")
+            bot.send_message(ADMIN_ID, f"{emoji} [{label} | {round(score,2)}] {news}")
 
-@bot.message_handler(commands=['export'])
-def export_csv(message):
-    path = "/tmp/signals.csv"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("Type,Message,Score,Created_At\n")
-        for row in c.execute("SELECT type, message, score, created_at FROM signals"):
-            f.write(f"{row[0]},{row[1].replace(',', ';')},{row[2]},{row[3]}\n")
-    with open(path, "rb") as f:
-        bot.send_document(message.chat.id, f)
+schedule.every(5).minutes.do(main_job)
 
-# اجرا
-def start_polling():
-    bot.infinity_polling(timeout=60, long_polling_timeout=20)
-
-if __name__ == "__main__":
-    threading.Thread(target=start_polling).start()
-    schedule.every(15).minutes.do(main_job)
-    print("📈 تحلیل‌گر طلا در حال اجراست...")
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+# --- اجرای دائمی ---
+print("🤖 ربات پرداخت و سیگنال‌دهی فعال شد...")
+while True:
+    schedule.run_pending()
+    time.sleep(1)
+    bot.polling(none_stop=True)
