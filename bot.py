@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from transformers import pipeline  # تحلیل احساسات با HuggingFace
 import numpy as np
+import pandas as pd  # اضافه‌شده برای محاسبات MACD
 
 # بارگذاری متغیرهای محیطی
 load_dotenv()
@@ -63,10 +64,10 @@ def activate_user(user_id, days):
 @bot.message_handler(commands=['subscribe'])
 def show_plans(message):
     text = """پلن‌های اشتراک:
-"
+"""
     for k, v in PLANS.items():
         text += f"🔹 {k} → {v['price']} USDT / {v['days']} روز\n"
-    text += "\nبرای خرید، مثلا بنویس: /buy 7days"""
+    text += "\nبرای خرید، مثلا بنویس: /buy 7days"
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['buy'])
@@ -138,66 +139,6 @@ def fetch_technical_analysis():
 
 def calculate_macd_signal(closes):
     exp1 = np.array(pd.Series(closes).ewm(span=12, adjust=False).mean())
-    exp2 = np.array(pd.Series(closes).ewm(span=26, adjust=False).mean())
-    macd = exp1 - exp2
-    signal = pd.Series(macd).ewm(span=9, adjust=False).mean()
-    if macd[-1] > signal.iloc[-1] and macd[-2] <= signal.iloc[-2]:
-        return "MACD_CROSS_UP"
-    elif macd[-1] < signal.iloc[-1] and macd[-2] >= signal.iloc[-2]:
-        return "MACD_CROSS_DOWN"
-    return "MACD_NEUTRAL"
-
-def calculate_rsi_signal(closes, period=14):
-    delta = np.diff(closes)
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-    avg_gain = np.mean(gain[-period:])
-    avg_loss = np.mean(loss[-period:])
-    if avg_loss == 0:
-        return "RSI_OVERBOUGHT"
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    if rsi < 30:
-        return "RSI_OVERSOLD"
-    elif rsi > 70:
-        return "RSI_OVERBOUGHT"
-    return "RSI_NEUTRAL"
-
-# --- ربات ---
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "سلام فرنام! ربات فعال شد. برای اشتراک دستور /subscribe رو بزن.")
-
-@bot.message_handler(commands=['signal'])
-def send_signal(message):
-    if not is_user_active(message.from_user.id):
-        bot.reply_to(message, "❌ اشتراک شما فعال نیست. دستور /subscribe را بزنید.")
-        return
-    bot.send_message(message.chat.id, "📈 سیگنال تست ارسال شد!")
-
-# --- اجرای تحلیل و ارسال خودکار هر ۵ دقیقه ---
-def main_job():
-    print("🔍 تحلیل بازار...")
-    bot.send_message(ADMIN_ID, "⏰ اجرای تحلیل بازار و ارسال سیگنال")
-
-    macd_signal, rsi_signal = fetch_technical_analysis()
-    bot.send_message(ADMIN_ID, f"📉 MACD: {macd_signal}, RSI: {rsi_signal}")
-
-    news_list = fetch_economic_news()
-    if news_list:
-        bot.send_message(ADMIN_ID, "📰 آخرین اخبار اقتصادی:")
-        for news in news_list:
-            sentiment = sentiment_analyzer(news)[0]
-            label = sentiment['label']
-            score = sentiment['score']
-            emoji = "🟢" if label == "POSITIVE" else ("🔴" if label == "NEGATIVE" else "⚪")
-            bot.send_message(ADMIN_ID, f"{emoji} [{label} | {round(score,2)}] {news}")
-
-schedule.every(5).minutes.do(main_job)
-
-# --- اجرای دائمی ---
-print("🤖 ربات پرداخت و سیگنال‌دهی فعال شد...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
-    bot.polling(none_stop=True)
+    exp2 = np.array(pd.Series(closes).ewm(span=26,
+::contentReference[oaicite:12]{index=12}
+ 
